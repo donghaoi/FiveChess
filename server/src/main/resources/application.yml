@@ -1,0 +1,102 @@
+server:
+  port: 8081
+  # HTTPS 配置：默认关闭，保持本地 http 调试不变
+  # 启用方式：启动时加 --server.ssl.enabled=true，或设置环境变量 SERVER_SSL_ENABLED=true
+  # 证书口令支持用环境变量 SERVER_SSL_KEY_STORE_PASSWORD 覆盖，生产环境请替换为正式证书
+  ssl:
+    enabled: ${SERVER_SSL_ENABLED:false}
+    key-store: classpath:keystore.p12
+    key-store-type: PKCS12
+    key-store-password: ${SERVER_SSL_KEY_STORE_PASSWORD:fivechess}
+    key-alias: fivechess
+fivechess:
+  # 允许跨域访问的来源白名单（逗号分隔，支持 http://localhost:* 这类通配写法）
+  # 填 scheme://host:* 时，同时放行不带端口的 scheme://host（浏览器对默认端口不写端口号，
+  # 只写 :* 会匹配不上 https://example.com 这种最常见的写法）
+  # null 代表以 file:// 直接打开页面的场景；生产环境请改为正式域名并去掉 null
+  cors:
+    allowed-origin-patterns: "${FIVECHESS_CORS_ORIGINS:https://blog.donghao.ltd:*}"
+  # 滥用防护：限流、登录锁定、WebSocket 单 IP 连接数与聊天频率（状态保存在内存，重启即清空）
+  security:
+    # 滥用防护总开关：false 时所有限流/锁定/连接数/聊天频率限制直接放行（供压测与自动化测试关闭）
+    enabled: ${FIVECHESS_SECURITY_ENABLED:true}
+    # 是否按转发头识别真实来源 IP：auto / true / false
+    # auto（默认）：检测到部署平台注入的环境变量（Render 的 RENDER）时自动开启，否则保持关闭；
+    # true：无条件按转发头取值（必须确认后端不可被直连，否则客户端可伪造该头绕过限流与封禁）；
+    # false：只认 TCP 对端地址（nginx 手动配置时可显式关掉交给本项的下级开关）
+    trust-forwarded-for: ${FIVECHESS_TRUST_FORWARDED_FOR:auto}
+    # 是否直接采信 CF-Connecting-IP：auto / true / false
+    # 请求链路必定经过 Cloudflare（含运行在 Cloudflare 上的 Render）时开启，该头由边缘覆盖写入，
+    # 是唯一不会被"多层边缘地址"干扰的来源；直连或只有普通 nginx 时保持 false。
+    trust-cloudflare-header: ${FIVECHESS_TRUST_CLOUDFLARE_HEADER:auto}
+    # 可信代理层数：X-Forwarded-For 从右往左数第几跳是真实客户端。
+    # 只有 trust-forwarded-for=true 且没有可用的 CF-Connecting-IP 时才生效；
+    # 单层 Nginx 填 1，两层（CDN + Nginx）填 2。
+    # 填大了会把客户端自己写的那一段当成真实地址，等于允许伪造，务必与实际层数一致。
+    forwarded-for-hops: ${FIVECHESS_FORWARDED_FOR_HOPS:1}
+    # IPv6 封禁比对的掩码位数（默认 /64）：同一线路会在 /64 内轮换隐私地址，逐字比对会失效；
+    # 设为 128 则退化为精确匹配（同一设备换地址即可绕过）
+    ban-ipv6-prefix-bits: ${FIVECHESS_BAN_IPV6_PREFIX_BITS:64}
+    http:
+      # 单个 IP 在窗口内的 HTTP 接口总请求上限与窗口长度（毫秒）
+      per-ip-limit: ${FIVECHESS_HTTP_PER_IP_LIMIT:600}
+      window-ms: ${FIVECHESS_HTTP_WINDOW_MS:60000}
+    login:
+      # 登录尝试：单 IP、单账号在窗口内的次数上限
+      ip-limit: ${FIVECHESS_LOGIN_IP_LIMIT:10}
+      account-limit: ${FIVECHESS_LOGIN_ACCOUNT_LIMIT:10}
+      window-ms: ${FIVECHESS_LOGIN_WINDOW_MS:60000}
+      # 账号连续失败达到该次数即临时锁定，锁定时长（毫秒）默认 5 分钟
+      lock-threshold: ${FIVECHESS_LOGIN_LOCK_THRESHOLD:5}
+      lock-ms: ${FIVECHESS_LOGIN_LOCK_MS:300000}
+    register:
+      # 单个 IP 在窗口内可注册的账号数上限
+      per-ip-limit: ${FIVECHESS_REGISTER_IP_LIMIT:10}
+    ws:
+      # 单个 IP 允许的并发 WebSocket 连接数上限
+      max-connections-per-ip: ${FIVECHESS_WS_MAX_PER_IP:20}
+    chat:
+      # 同一用户单位时间内的聊天消息条数上限与窗口长度（毫秒）
+      per-user-limit: ${FIVECHESS_CHAT_PER_USER_LIMIT:20}
+      window-ms: ${FIVECHESS_CHAT_WINDOW_MS:10000}
+      # 聊天记录保留天数，超期记录由后台任务定期清理
+      retention-days: ${FIVECHESS_CHAT_RETENTION_DAYS:30}
+    room-password:
+      # 私人房间密码：同一账号在窗口内允许尝试的次数上限。
+      # 超限后即使密码正确也先挡一段时间，防止拿错误密码反复试探/爆破。
+      try-limit: ${FIVECHESS_ROOM_PASSWORD_TRY_LIMIT:10}
+      window-ms: ${FIVECHESS_ROOM_PASSWORD_WINDOW_MS:60000}
+    session-check:
+      # 登录态探测（/sessionCheck）不需要登录、且不走 HTTP 总限流，
+      # 这里给它单独的上限，避免被当成免费接口无限刷。
+      per-ip-limit: ${FIVECHESS_SESSION_CHECK_PER_IP_LIMIT:120}
+  # 登录令牌：闲置有效期（小时）。从最后一次使用算起，超过该时长未使用即失效，需要重新登录；
+  # 0 表示永不过期。请求接口、建立连接、页面心跳都算一次使用，页面开着不会被判过期。
+  token:
+    ttl-hours: ${FIVECHESS_TOKEN_TTL_HOURS:12}
+  # 管理员账号名：该账号可禁言/封号、隐身查看任意房间、解散房间；请谨慎配置并妥善保管密码
+  admin:
+    login: ${FIVECHESS_ADMIN_LOGIN:admin}
+  # 头像：图片本身存数据库（user_avatar 表），后端不读写本地图片文件。
+  # 内置头像（touxiang/）与管理员默认头像（avatar.webp）仍由前端静态服务托管。
+  avatar:
+    # 前端静态基路径：内置头像（touxiang/）与管理员默认头像（avatar.webp）都挂在这个前缀下。
+    # 本项目部署在站点子路径 /box/Chess/ 下，所以默认填 /box/Chess，
+    # 后端下发的地址形如 /box/Chess/static/image/touxiang/xxx.webp。
+    # 部署到别的位置时改这里（或用环境变量 FIVECHESS_AVATAR_STATIC_BASE 覆盖）；
+    # 前端与静态资源同域且部署在域名根时，把它设成空字符串即可。
+    static-base: ${FIVECHESS_AVATAR_STATIC_BASE:/box/Chess}
+    # 后端对外地址，用于生成上传头像的绝对地址 /avatar/{id}。
+    # 前后端不同域名时必须配置，否则浏览器会按页面域名去请求 /avatar/{id} 而 404。
+    # 部署在 Render 时自动读取平台注入的 RENDER_EXTERNAL_URL，无需手工设置。
+    api-base: ${FIVECHESS_AVATAR_API_BASE:${RENDER_EXTERNAL_URL:}}
+    # 可选：内置头像目录。仅当 classpath 清单 avatar-builtin.txt 缺失时用于本地扫描兜底
+    builtin-dir: ${FIVECHESS_AVATAR_BUILTIN_DIR:}
+spring:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    # 数据库连接与口令通过环境变量注入，配置文件中不再出现明文口令
+    # 启动与测试前请先设置 DB_PASSWORD（需要时再设置 DB_USERNAME、DB_URL）
+    url: "${DB_URL:jdbc:mysql://gateway01.ap-northeast-1.prod.aws.tidbcloud.com:4000/chess?useUnicode=true&allowPublicKeyRetrieval=true&sslMode=VERIFY_IDENTITY&characterEncoding=utf8&serverTimezone=Asia/Shanghai}"
+    username: "${DB_USERNAME:root}"
+    password: "${DB_PASSWORD}"

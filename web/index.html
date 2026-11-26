@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+	<title>在线联机五子棋</title>
+	<!-- 首帧兜底：样式表就绪前先把画布铺成主题深色，避免开页时先白一下 -->
+	<style>
+		html, body{ background-color: #1b1b1b; }
+	</style>
+	<!-- 首屏背景提前下载：Vue 挂载后立刻就是成品画面，不会先黑一下再弹出背景图 -->
+	<link rel="preload" as="image" href="./static/image/bg-2.webp">
+	<link rel="preload" as="image" href="./static/image/default-avatar.svg">
+	<link rel="stylesheet" href="./static/css/index.css?v=20261118c">
+	<link rel="stylesheet" href="./static/css/semantic.min.css?v=20261118a">
+	<link rel="stylesheet" href="./static/css/jquery-confirm.css?v=20261123a">
+	<link rel="stylesheet" href="./static/css/bootstrap.min.css?v=20261123a">
+
+<style>
+		/* Vue 尚未挂载完成前隐藏原始模板，避免刷新时闪出未渲染的 {{}} 与默认布局 */
+		[v-cloak]{ display: none !important; }
+		/* 启动期背景层：#app 被 v-cloak 隐藏时由它顶住首屏，配色与 bg-2 一致，
+		   挂载完成后被 app 内真正的 .bg-layer 覆盖，视觉上完全接上、不出现黑屏或白屏 */
+		#bootBg{
+			position: fixed;
+			top: 0;
+			right: 0;
+			bottom: 0;
+			left: 0;
+			z-index: 0;
+			background: #1b1b1b url("./static/image/bg-2.webp") center center / cover no-repeat;
+			pointer-events: none;
+		}
+		.online-list {
+			width: 100%;
+			background: rgba(255, 255, 255, 0.9);
+			border-radius: 8px;
+			margin-bottom: 15px;
+			padding: 10px;
+			box-shadow: 0 0 5px #ccc;
+		}
+		.online-top {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			border-bottom: 1px solid #eee;
+			padding-bottom: 8px;
+			margin-bottom: 8px;
+		}
+		.online-title {
+			font-size: 16px;
+			font-weight: bold;
+			color: #2185d0;
+		}
+		.online-count {
+			font-size: 14px;
+			color: #666;
+		}
+.online-body {
+			/* 最多完整显示 5 行，超出的人在该区域内下拉/滚动查看 */
+			max-height: 152px;
+			overflow-y: auto;
+			scrollbar-width: thin;
+		}
+		/* 细滚动条，避免在浅色面板上显得突兀 */
+		.online-body::-webkit-scrollbar {
+			width: 6px;
+		}
+		.online-body::-webkit-scrollbar-thumb {
+			background: #c8d6e2;
+			border-radius: 3px;
+		}
+		.online-body::-webkit-scrollbar-track {
+			background: transparent;
+		}
+		/* 超过 5 人时的下拉提示 */
+		.online-more {
+			margin-top: 6px;
+			padding-top: 6px;
+			border-top: 1px dashed #e2e8ef;
+			font-size: 12px;
+			line-height: 16px;
+			color: #2185d0;
+			text-align: center;
+		}
+		.online-user {
+			padding: 5px 0;
+			font-size: 14px;
+			display: flex;
+			align-items: center;
+			gap: 5px;
+		}
+		.online-self {
+			color: #b35b00;
+			font-size: 12px;
+			flex: 0 0 auto;
+		}
+		.no-online {
+			text-align: center;
+			color: #999;
+			padding: 10px 0;
+		}
+
+		/* 公共聊天窗口 - 正常显示状态 */
+.chat-window.public-room {
+			position: fixed !important;
+			bottom: 15px;
+			left: 15px;
+			width: 320px;
+			z-index: 9999;
+			/* 只对位移与透明度做过渡：不再过渡 width/left，避免刷新时窗口宽度先被拉长再回弹 */
+			transition: transform 0.3s ease, opacity 0.3s ease;
+		}
+
+		/* 公共聊天窗口 - 隐藏状态：整体向左滑出，显示时向右滑入，而不是直接 display:none */
+		.chat-window.public-room.chat-slide-out {
+			transform: translateX(calc(-100% - 24px));
+			opacity: 0;
+			pointer-events: none;
+		}
+
+		/* 公共聊天切换按钮 - 正常显示位置 */
+.public-chat-toggle-btn {
+			position: fixed;
+			left: 335px;
+			top: calc(100vh - 15px - 220px);
+			transform: translateY(-50%);
+			z-index: 10000;
+			width: 30px;
+			height: 80px;
+			background-color: #2185d0;
+			color: #fff;
+			border: none;
+			border-radius: 0 4px 4px 0;
+			cursor: pointer;
+			font-size: 12px;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+/* 按钮跟随窗口一起平滑移动 */
+			transition: left 0.3s ease, right 0.3s ease, background-color 0.2s ease;
+		}
+
+		/* 按钮鼠标悬浮效果（保留原有样式） */
+		.public-chat-toggle-btn:hover {
+			background-color: #1678c2;
+		}
+
+		/* 窗口隐藏时，按钮自动移动到最左侧 */
+		.chat-window.public-room.chat-slide-out + .public-chat-toggle-btn {
+			left: 15px;
+			border-radius: 4px 0 0 4px;
+		}
+
+		/* 昵称红色样式（完全保留不动） */
+		.nickname-red {
+			color: #ff4d4f;
+			font-weight: bold;
+		}
+
+		/* 消息行统一排版（完全保留不动） */
+		.chat-middle .message-container div p {
+			margin: 0;
+			line-height: 1.5;
+		}
+		.chat-middle .message-container div {
+			padding: 2px 5px;
+		}
+
+		/* 自己发的消息淡粉色样式（完全保留不动） */
+		.chat-middle .message-right {
+			background: #FFD1DC !important;
+			border-radius: 4px !important;
+			margin: 2px 5px !important;
+		}
+		.chat-window.public-room .chat-middle .message-right {
+			background: #FFD1DC !important;
+			border-radius: 4px !important;
+			margin: 2px 5px !important;
+		}
+		/* 博客按钮容器样式 */
+		.blog-btn-wrap {
+			text-align: center; /* 让按钮居中 */
+			margin-bottom: 10px; /* 和下方在线用户列表保持间距 */
+		}
+		.blog-btn {
+			display: inline-block;
+			padding: 6px 16px;
+			background: #2185d0;
+			color: #fff;
+			text-decoration: none;
+			border-radius: 4px;
+			font-size: 14px;
+			border: none;
+		}
+		.blog-btn:hover {
+			background: #1678c2;
+			text-decoration: none;
+			color: #fff;
+		}
+/* 消息文本：长内容自动换行，避免窄屏下被横向裁切 */
+		.chat-middle .message-container p,
+		.chat-middle .message-container div {
+			overflow-wrap: anywhere;
+			word-break: break-word;
+		}
+
+		/* ===== 移动端 / 窄窗口适配 =====
+		   桌面端的 fixed 悬浮公共聊天窗在窄屏会盖住在线列表与房间聊天窗，
+		   「隐藏/显示」按钮也会压在输入行上。这里让两个聊天窗回到文档流
+		   依次纵向排列，切换按钮改为整宽的普通按钮。 */
+		@media (max-width: 1100px) {
+			.chat-window.public-room {
+				position: static !important;
+				top: auto !important;
+				left: auto !important;
+				right: auto !important;
+				bottom: auto !important;
+				width: 100% !important;
+				max-width: 100% !important;
+				height: min(46vh, 300px);
+				transform: none !important;
+				opacity: 1 !important;
+			}
+			/* 窄屏隐藏时直接收起，不保留横向滑出后的占位（桌面端仍保留滑动动画） */
+			.chat-window.public-room.chat-slide-out {
+				display: none;
+			}
+			.public-chat-toggle-btn {
+				position: static !important;
+				top: auto !important;
+				left: auto !important;
+				right: auto !important;
+				bottom: auto !important;
+				display: block;
+				width: 100%;
+				height: 36px;
+				margin: 8px 0 0;
+				border-radius: 8px;
+				transform: none !important;
+			}
+			.chat-window.public-room.chat-slide-out + .public-chat-toggle-btn {
+				margin-top: 0;
+			}
+			/* iOS / 微信内置浏览器在输入框 font-size < 16px 时会自动放大页面 */
+			.chat-bottom input, .online-search input, .room-search-input {
+				font-size: 16px;
+			}
+		}
+	</style>
+</head>
+<body >
+<!-- 启动期背景（Vue 挂载前顶住画面，挂载后被 app 内的 .bg-layer 覆盖） -->
+<div id="bootBg" aria-hidden="true"></div>
+<div id="app" v-cloak>
+	<!-- 背景层：固定在视口，任何分辨率、滚动与缩放都完整铺满，不随内容高度截断 -->
+	<div class="bg-layer" :style="'background-image: url('+background_image+')'"></div>
+	<!-- 连接状态提示条：断线后自动重连期间显示（点击可立即重试），重连成功即消失 -->
+	<div class="fc-conn-banner" v-if="connBanner" @click="forceReconnect()">{{connBanner}}</div>
+	<div class="wrapper">
+
+		<!-- 房间顶部：比分条 + 房间号标题。两者放在同一个纵向居中容器里，
+		     共用一条竖轴，比分条始终与下方标题（含房间号与观战人数）正中对齐 -->
+		<div class="room-head">
+			<!-- 房间实时比分：只在房内坐齐两人时出现；左右分别对应房主/房客，数字为双方在本房间内各自赢下的局数。
+			     左右两块昵称区等宽，因此中间的数字始终落在胶囊正中心 -->
+			<div class="score-bar" id="scoreBar" v-if="scoreBarVisible" :title="'本房间实时比分：' + scoreFullNameLeft + ' ' + scoreLeft + ' : ' + scoreRight + ' ' + scoreFullNameRight">
+				<span class="score-player" :class="{leader: scoreLeft > scoreRight}">
+					<span class="score-name">{{scoreNameLeft}}</span>
+					<span class="score-badge" v-if="scoreMeOnLeft">我</span>
+				</span>
+				<span class="score-num" :class="{'is-lead': scoreLeft > scoreRight}">{{scoreLeft}}</span>
+				<span class="score-sep">:</span>
+				<span class="score-num" :class="{'is-lead': scoreRight > scoreLeft}">{{scoreRight}}</span>
+				<span class="score-player" :class="{leader: scoreRight > scoreLeft}">
+					<span class="score-badge" v-if="scoreMeOnRight">我</span>
+					<span class="score-name">{{scoreNameRight}}</span>
+				</span>
+			</div>
+			<h1 class="title ui blue header" id="title"><span class="pk-switch-wrap" v-show="roomReady && !spectateMode && isMyRoomOwner" @click="toggleRoomOpen()" :title="roomIsOpen ? '公开房间：任何人可加入' : '私人房间：需要密码加入，受邀玩家可直接加入'"><span class="pk-label" :class="{on: !roomIsOpen}">私人</span><span class="pk-switch" :class="roomIsOpen ? 'is-public' : 'is-private'"><span class="pk-knob"></span></span><span class="pk-label" :class="{on: roomIsOpen}">公开</span></span><span class="title-main">{{ titleText }}</span><span class="title-spectators" v-if="roomReady">观战 {{mySpectatorCount}} 人</span></h1>
+		</div>
+		<!--用户信息-->
+		<div class="container-all">
+			<div class="left">
+				<div class="userInfo">
+					<div class="avatar-container" :class="{uploading: avatarBusy}" @click="chooseAvatar()">
+						<img class="avatar" :src="avatarSrc" @error="onAvatarError">
+						<span class="avatar-mask">修改头像</span>
+						<input type="file" ref="avatarInput" class="avatar-file" accept="image/*" style="display:none" @change="onAvatarPicked">
+					</div>
+					<div class="name-container">
+						<p class="ui green header name">{{user.name}}<span v-if="isMyRoomOwner" class="owner-badge">(房主)</span></p>
+					</div>
+				</div>
+				<div class="btn-container">
+					<button onclick="logout()" class="ui red button">退出登录</button>
+					<br>
+					<br>
+					<button @click="backToLobby()" v-show="!roomReady" class="ui blue button">返回大厅</button>
+					<br>
+					<br>
+					<button @click="getHistoryGame(pageNum)" v-show="!roomReady" class="ui blue button">历史对局</button>
+					<br>
+					<br>
+					<div class="ui blue buttons">
+						<div class="ui button">背景</div>
+						<div class="ui floating dropdown icon button">
+							<i class="dropdown icon"></i>
+							<div class="menu">
+								<div class="item" v-for="(bg,index) in bgs" @click="changeBg(bg.url)"><i class="image icon"></i>{{bg.name}}</div>
+							</div>
+						</div>
+</div>
+					<!-- ===== 管理员：封号名单（固定在大厅左侧「背景」下方，默认展开，最多显示 10 个，可就地解封） ===== -->
+					<div class="admin-banned-box" v-if="isAdmin && lobbyReady">
+						<div class="admin-banned-head" @click="adminBannedOpen = !adminBannedOpen">
+							<span class="admin-banned-title">封号名单</span>
+							<span class="admin-banned-count">{{adminBannedList.length}} 人</span>
+							<span class="admin-banned-toggle">{{adminBannedOpen ? '收起' : '展开'}}</span>
+						</div>
+						<div class="admin-banned-list" v-show="adminBannedOpen">
+							<div class="admin-banned-item" v-for="b in adminBannedView" :key="b.id">
+								<div class="admin-banned-line1">
+									<span class="admin-banned-name" :title="(b.nick || b.name || b.login)">{{b.nick || b.name || b.login}}</span>
+									<button class="mini-btn admin-view" @click="adminUnban(b)">解除封号</button>
+								</div>
+								<div class="admin-banned-line2">
+									<span class="admin-banned-ip" :title="bannedIpTitle(b)">已封IP：{{bannedIpText(b)}}</span>
+									<span class="admin-banned-time">{{b.banTime || ''}}</span>
+								</div>
+							</div>
+							<div v-if="adminBannedList.length === 0" class="admin-banned-empty">暂无封号账号</div>
+							<div v-else-if="adminBannedList.length > 10" class="admin-banned-more">仅显示最近 10 个，共 {{adminBannedList.length}} 个</div>
+						</div>
+					</div>
+				</div>
+			</div>
+			<!--			棋盘-->
+			<div class="middle">
+<div v-show="lobbyReady" class="lobby">
+<h4 class="tip lobby-title">大厅</h4>
+					<!-- 搜索房间：按房间号匹配（数字模糊匹配，包含即命中） -->
+					<div class="room-search">
+						<i class="search icon"></i>
+						<input type="text" v-model="roomSearch" class="room-search-input" placeholder="搜索房间号（如 000001）">
+						<i class="times circle icon room-search-clear" v-show="roomSearch" @click="roomSearch=''" title="清空搜索"></i>
+					</div>
+					<div class="room-no-match" v-if="roomSearch && roomsFiltered.length === 0">没有找到该房间号</div>
+					<div class="room-container">
+						<div class="room" :class="'state-' + (room.state || 'waiting')" v-for="(room,index) in roomsFiltered">
+							<div class="room-no" :title="'房间号：' + (room.roomNo || '')">房间号：{{room.roomNo || '------'}}</div>
+						<div class="room-spectate-wrap" v-if="room.state=='playing' && String(room.playerId1)!==String(user.id) && String(room.playerId2)!==String(user.id)"><button class="mini-btn spectate" @click="spectateFromCard(room)">观战</button></div>
+						<!-- 管理员：可查看任意房间（含私人房间）画面与聊天记录，也可直接解散该房间 -->
+						<div class="room-admin-wrap" v-if="isAdmin"><button class="mini-btn admin-view" @click="adminViewRoom(room)">巡查房间</button><button class="mini-btn admin-ban" @click="adminDismissRoom(room)">解散房间</button></div>
+						<div class="room-spectators" v-if="room.state=='playing'">观战 {{room.spectatorCount||0}} 人</div>
+<div class="room-visibility" v-if="room.state=='waiting' || room.state=='room'" :class="room.open===false?'private':'public'" :title="room.open===false?'私人房间：需要密码加入':'公开房间：任何人可加入'"><i :class="room.open===false?'lock icon':'globe icon'"></i>{{room.open===false?'私人房间':'公开房间'}}</div>
+							<h4 class="tip">{{room.state=='waiting'?'等待加入···':(room.state=='over'?'对局结束':(room.state=='room'?'房间中':'游戏中'))}}</h4>
+							<div class="room-avatar">
+								<div class="room-left">
+									<img class="player-avatar" :src="roomAvatarSrc(room, 1)" @error="onRoomAvatarError(room, 1)">
+									<p class="player-name">{{room.playerName1}}</p>
+								</div>
+								<div class="room-right">
+									<img class="player-avatar" @click="joinRoom(room)" :src="roomAvatarSrc(room, 2)" @error="onRoomAvatarError(room, 2)">
+									<p v-show="room.playerId2!='-1'" class="player-name">{{room.playerName2}}</p>
+								</div>
+							</div>
+						</div>
+<div class="room create-room" v-if="!roomSearch">
+							<h4 class="tip">创建房间</h4>
+							<!-- 房间号由服务端自动分配，点击下方加号头像即可创建 -->
+							<div class="room-avatar">
+								<img @click="createRoom()" alt="创建" style="margin: auto" class="add-avatar" :src="addImage">
+							</div>
+						</div>
+
+
+					</div>
+				</div>
+<div v-show="roomReady || spectateMode || adminViewOpen" class="board">
+					<!-- 房间名称统一在页面标题栏展示（房间内标题栏显示「房间名称：XXX」），此处不再重复显示 -->
+					<canvas  id="chessBoard" class="chessBoard" style="background-color: #DEB887;" width="540px" height="540px"></canvas>
+					<div class="room-players" v-show="roomReady || spectateMode || adminViewOpen">
+						<span class="rp-name rp-owner">{{roomViewSrc.playerName1}}<span class="rp-owner-tag">(房主)</span><span class="rp-ready" :class="{ready: playerReady(1)}" v-show="roomReady || spectateMode || adminViewOpen">{{ playerReady(1) ? '已准备' : '未准备' }}</span><span class="rp-admin-actions" v-if="isAdmin && !spectateMode"><button class="mini-btn admin-mute" v-if="canManageId(roomViewSrc.playerId1)" :class="{muted: mutedStateOf(roomViewSrc.playerId1)}" @click="adminToggleMuteById(roomViewSrc.playerId1)">{{ mutedStateOf(roomViewSrc.playerId1) ? '解除禁言' : '禁言' }}</button><button class="mini-btn admin-ban" v-if="canManageId(roomViewSrc.playerId1)" @click="adminBanById(roomViewSrc.playerId1, roomViewSrc.playerName1)">封号</button></span></span>
+						<span class="rp-name rp-guest">{{(roomViewSrc.playerId2 && roomViewSrc.playerId2!='-1') ? roomViewSrc.playerName2 : '等待加入···'}}<span class="rp-ready" :class="{ready: playerReady(2)}" v-if="roomViewSrc.playerId2 && roomViewSrc.playerId2!='-1'" v-show="roomReady || spectateMode || adminViewOpen">{{ playerReady(2) ? '已准备' : '未准备' }}</span><span class="rp-admin-actions" v-if="isAdmin && !spectateMode && roomViewSrc.playerId2 && roomViewSrc.playerId2!='-1'"><button class="mini-btn admin-mute" v-if="canManageId(roomViewSrc.playerId2)" :class="{muted: mutedStateOf(roomViewSrc.playerId2)}" @click="adminToggleMuteById(roomViewSrc.playerId2)">{{ mutedStateOf(roomViewSrc.playerId2) ? '解除禁言' : '禁言' }}</button><button class="mini-btn admin-ban" v-if="canManageId(roomViewSrc.playerId2)" @click="adminBanById(roomViewSrc.playerId2, roomViewSrc.playerName2)">封号</button></span></span>
+					</div>
+					<div>
+						<div style="text-align: center;" v-show="!spectateMode && !adminViewOpen">
+<button @click="getReady()" :class="gameReady ? 'ui orange button' : 'ui green button'" v-show="!gameStarted">{{ gameReady ? '取消准备' : '准备' }}</button>
+							<button v-show="gameReady && gameStarted" @click="regretOne()" class="ui green button">悔棋</button>
+							<button v-show="gameReady && gameStarted" @click="surrender()" class="ui green button">认输</button>
+							<button v-show="gameReady && gameStarted" @click="peace()" class="ui green button">求和</button>
+							<button v-show="gameReady && gameStarted" @click="restart()" class="ui green button">重开</button>
+							<button v-show="!spectateMode && isMyRoomOwner && myRoom.playerId2 && myRoom.playerId2 != '-1'" class="ui red button" @click="kickGuest()">踢出玩家</button>
+							<button class="ui red button " @click="quitRoom()">离开房间</button>
+						</div>
+<div style="text-align: center;" v-show="spectateMode">
+							<button class="ui red button" @click="quitSpectate()">退出观战</button>
+						</div>
+						<div style="text-align: center;" v-show="adminViewOpen">
+							<button class="ui red button" @click="adminDismissCurrentRoom()">解散房间</button>
+							<button class="ui button" @click="adminCloseView()">退出查看</button>
+						</div>
+					</div>
+				</div>
+				<div v-show="reviewReady" class="board">
+					<canvas  id="reviewBoard" class="chessBoard" style="background-color: #DEB887;" width="540px" height="540px"></canvas>
+					<div>
+						<div style="text-align: center;">
+							<button  @click="reviewFirst()" class="ui green button">开局</button>
+							<button  @click="reviewLast()" class="ui green button">上一步</button>
+							<button  @click="reviewNext()" class="ui green button">下一步</button>
+							<button  @click="reviewFinal()" class="ui green button">终局</button>
+<button  @click="pressAutoPause()" class="ui green button"><i :class="{'play':!autoReview,'pause':autoReview,'icon':true}"></i></button>
+							<button  @click="exitReview()" class="ui green button">退出复盘</button>
+						</div>
+					</div>
+				</div>
+<!-- 封号名单已移至大厅左侧「背景」下方（见 .left 内的 admin-banned-box） -->
+
+				<div v-show="tableReady" class="lobby history-panel">
+					<div class="history-scroll">
+						<!-- unstackable：阻止 Semantic 在 767px 以下把表格强行拆成“一行一个字段”的堆叠形态，
+						     窄屏改用下面 .history-panel 的卡片样式（每条记录一张卡，字段带标签） -->
+						<table class="ui celled padded unstackable table">
+							<thead>
+							<tr><th>序   号</th>
+								<th>开始时间</th>
+								<th>结束时间</th>
+								<th>对手昵称</th>
+								<th>步   数</th>
+								<th>结   局</th>
+								<th>操   作</th>
+							</tr></thead>
+							<tbody>
+							<tr v-for="(game,index) in historyGames">
+								<td data-label="序号">{{index+1}}</td>
+								<td data-label="开始时间">{{game.start}}</td>
+								<td data-label="结束时间">{{game.end}}</td>
+								<td data-label="对手昵称">{{game.player1==user.id?game.name2:game.name1}}</td>
+								<td data-label="步数">{{game.steps}}</td>
+								<td data-label="结局"><button :class="resultClass(game)">{{showResult(game)}}</button></td>
+								<td data-label="操作"><button class="ui blue button" @click="review(index,game)">复盘</button></td>
+							</tr>
+							</tbody>
+						</table>
+					</div>
+					<div class="history-pager">
+						<button class="pager-btn" :disabled="!hasLastPage" @click="getHistoryGame(pageNum-1)">上一页</button>
+						<span class="pager-pos">{{pageNum}}/{{totalPage || 1}}</span>
+						<button class="pager-btn" :disabled="!hasNextPage" @click="getHistoryGame(pageNum+1)">下一页</button>
+						<span class="pager-total">{{'共'+totalNum+'条'}}</span>
+					</div>
+				</div>
+			</div>
+
+			<div class="right">
+				<div class="blog-btn-wrap">
+					<a href="https://blog.donghao.ltd/" target="_blank" class="blog-btn">前往博主的博客</a>
+				</div>
+				<!-- ====================== 在线用户列表 ====================== -->
+				<div class="online-list">
+<div class="online-top">
+						<div class="online-title">在线用户列表</div>
+						<div class="online-count">在线：{{onlineCount}}人</div>
+					</div>
+					<div class="online-search">
+						<i class="search icon"></i>
+						<input type="text" v-model="onlineSearch" placeholder="搜索昵称/账号">
+						<i v-show="onlineSearch" class="times circle icon online-search-clear" @click="onlineSearch=''" title="清空"></i>
+					</div>
+					<div class="online-body">
+						<div class="online-user" v-for="(u, index) in onlineUsersFiltered" :key="u.id" :data-user-id="u.id">
+							<i class="circle icon green"></i><span class="online-name"><span class="online-nick">{{u.nick}}</span><span class="online-self" v-if="String(u.id)===String(user.id)">(我)</span></span><span class="online-status" :class="statusClass(u.status)">{{statusText(u.status)}}</span><span class="online-actions" v-if="canInviteUser(u) || canSpectateUser(u) || (isAdmin && canManageId(u.id))"><button class="mini-btn invite" v-if="canInviteUser(u)" :class="{blocked: isInviteBlocked(u.id)}" :disabled="invitePendingOf(u.id) || inviteCooldownLeft(u.id) > 0" @click="inviteUser(u)">{{ invitePendingOf(u.id) ? '等待接受中...' : (inviteCooldownLeft(u.id) > 0 ? inviteCooldownLeft(u.id) + 's' : '邀请') }}</button><button class="mini-btn spectate" v-if="canSpectateUser(u)" @click="spectateUser(u)">观战</button><button class="mini-btn admin-mute" v-if="isAdmin && canManageId(u.id)" :class="{muted: mutedStateOf(u.id)}" @click="adminToggleMuteById(u.id)">{{ mutedStateOf(u.id) ? '解除禁言' : '禁言' }}</button><button class="mini-btn admin-ban" v-if="isAdmin && canManageId(u.id)" @click="adminBanById(u.id, u.nick)">封号</button></span>
+						</div>
+<div v-if="onlineUsers.length === 0" class="no-online">暂无在线用户</div>
+						<div v-else-if="onlineUsersFiltered.length === 0" class="no-online">没有匹配的用户</div>
+					</div>
+					<div class="online-more" v-if="onlineUsersFiltered.length > 5">下拉查看全部（共 {{onlineUsersFiltered.length}} 人）</div>
+				</div>
+				<!-- ====================== 公共大厅聊天框 ====================== -->
+				<!--核心：只有房间内才允许隐藏，大厅永远不隐藏-->
+				<div class="chat-window" :class="[(roomReady || adminViewOpen || publicChatFloating) ? 'public-room' : '',(roomReady || adminViewOpen || publicChatFloating) && !publicChatVisible ? 'chat-slide-out' : '']">
+					<div class="chat-top">
+						<div class="chat-name">公共聊天大厅</div>
+					</div>
+					<div class="chat-middle" id="public-chat-body">
+						<div class="message-container">
+<div v-for="(msg, index) in publicMessages" :class="msg.type === 'notice' ? 'public-notice-line' : msg.position">
+								<p v-if="msg.type === 'notice'" class="public-notice-text">{{msg.content}}</p>
+								<p v-else>{{msg.time}} <span class="nickname-red">{{msg.senderNick}}</span>：{{msg.content}}</p>
+							</div>
+						</div>
+					</div>
+<div class="chat-bottom">
+						<!-- 被禁言：输入框与发送按钮仍在同一行但被冻结，提示直接显示在输入框那一行 -->
+						<div class="ui action input">
+							<div class="muted-inline" v-if="mutedSelf"><span class="muted-scroll-text"><span class="muted-seg">你已被管理员禁言，暂时无法发言</span><span class="muted-seg" aria-hidden="true">你已被管理员禁言，暂时无法发言</span></span></div>
+							<input v-else type="text" v-model="publicText" @keyup.enter="sendPublicText()" placeholder="公共聊天·回车发送">
+							<button @click="sendPublicText()" class="ui blue button" :disabled="mutedSelf">发送</button>
+						</div>
+					</div>
+				</div>
+<button class="public-chat-toggle-btn" @click="togglePublicChat" v-show="roomReady || adminViewOpen || publicChatFloating">
+					{{publicChatVisible ? '隐藏' : '显示'}}
+				</button>
+<!-- 复盘的棋子颜色改为进入复盘时用弹窗展示，此处不再常驻窗口 -->
+
+				<!-- 房间聊天框，添加 room-chat 类 -->
+				<div class="chat-window room-chat" v-show="roomReady || adminViewOpen">
+					<div class="chat-top">
+						<div class="chat-name">房间消息</div>
+					</div>
+					<div class="chat-middle" id="chat-body">
+						<div class="message-container">
+							<div v-for="(message,index) in roomChatMessages" :class="showClass(message.position)">
+								<!-- 普通聊天消息：显示完整时间+红色昵称+内容 -->
+								<p v-if="message.type === 'chat'">
+									{{message.time}} <span class="nickname-red">{{message.senderNick}}</span>：{{message.content}}
+								</p>
+								<!-- 系统消息：保持原格式，不显示昵称和红色 -->
+								<p v-else>
+								  <span v-if="message.content.includes('网络空间并非法外之地')" style="color:#666">
+									<span style="color:red">系统提示：</span>{{message.content.replace('系统消息：','')}}
+								  </span>
+									<span v-else>{{message.content}}</span>
+								</p>
+							</div>
+						</div>
+					</div>
+<div class="chat-bottom">
+						<!-- 被禁言：输入框与发送按钮仍在同一行但被冻结，提示直接显示在输入框那一行 -->
+						<div class="ui action input">
+							<div class="muted-inline" v-if="mutedSelf"><span class="muted-scroll-text"><span class="muted-seg">你已被管理员禁言，暂时无法发言</span><span class="muted-seg" aria-hidden="true">你已被管理员禁言，暂时无法发言</span></span></div>
+							<input v-else type="text" v-model="text" @keyup.enter="sendText()" placeholder="回车发送消息">
+							<button @click="sendText()" class="ui blue button" :disabled="mutedSelf">发送</button>
+						</div>
+					</div>
+				</div>
+			</div>
+
+		</div>
+
+
+	</div>
+
+</div>
+<script src="./static/js/MyUtil.js?v=20261123a" type="text/javascript"></script>
+<!-- 站点级公共脚本：位于网站根目录 /js/ 下，不随本项目部署路径变化 -->
+<script src="/js/loper_too.js"></script>
+<script src="./static/js/jquery.min.js?v=20261123a"></script>
+<script src="./static/js/jquery-confirm.js?v=20261123a"></script>
+<!-- 第三方 CDN 上的 bootstrap 只提供基础样式行为，页面未使用其 JS 组件；
+     加 defer 后它不再阻塞后续脚本，CDN 变慢/被墙也不会把首屏卡成一片黑 -->
+<script defer src="https://libs.baidu.com/bootstrap/3.2.0/js/bootstrap.min.js"></script>
+<script src="./static/js/semantic.min.js?v=20261123a"></script>
+<script src="./static/js/axios.min.js?v=20261123a" type="text/javascript"></script>
+<script type="text/javascript" src="./static/js/vue@2.js?v=20261123a"></script>
+<script src="./static/js/common.js?v=20261116d" type="text/javascript"></script>
+<script src="./static/js/index.js?v=20261126b" type="text/javascript"></script>
+
+</body></html>
