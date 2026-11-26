@@ -2,12 +2,16 @@
 let url = getHttpUrl();
 
 /* ===== 提交按钮的等待态 =====
-   弱网或后端冷启动时一次登录可能要等十几秒，期间必须让用户看到「在动」，
+   弱网或后端启动较慢时一次登录可能要等十几秒，期间必须让用户看到「在动」，
    否则会反复点击（重复登录会让两次签发的令牌互相顶掉）。
    - 按钮：禁用 + 转圈 + 文案变「登录中…」
-   - 提示：5 秒后才出现（正常网速根本看不到），10 秒后升级为「服务器可能在冷启动」，
-     这条对 Render 免费实例的首访很有用（实测冷启动约 75 秒） */
+   - 提示：5 秒后才出现（正常网速根本看不到），10 秒后换成更软的说法；
+     阈值都是给「响应慢但最终会成功」的情形留余地，不是针对某个平台 */
 var fcWaitTimers = {};
+
+/* 提交请求的超时（毫秒）：正常服务器 1 秒内返回，30 秒足够覆盖弱网下的
+   TLS 握手与 TCP 重传；超过就把按钮交还给用户，而不是无限等下去 */
+var FC_SUBMIT_TIMEOUT = 30000;
 
 function fcSetSubmitting(btnId, waitId, busy, busyText){
     var btn = document.getElementById(btnId);
@@ -54,11 +58,48 @@ function fcSetSubmitting(btnId, waitId, busy, busyText){
         }, 5000),
         cold: setTimeout(function(){
             if(!wait || !textEl){ return; }
-            //\n 由 CSS 的 white-space: pre-line 渲染成换行，长句按语义断成两行
-            textEl.textContent = '服务器还在努力赶路中，请再给它一点点时间，\n不要离开我，马上就好……';
+            //\n 由 CSS 的 white-space: pre-line 渲染成换行，长句按语义断成两行。
+            //末尾不写省略号：省略号统一交给 HTML 里的 .fc-dots 三个点做呼吸动画，
+            //这样 5 秒和 10 秒两条文案的点是同一组 DOM，动画节奏完全一致、切换时不会跳
+            textEl.textContent = '服务器还在努力赶路中，请再给它一点点时间，\n不要离开我，马上就好';
             wait.classList.add('is-cold');
         }, 10000)
     };
+}
+
+/* ===== 提交失败后的提示 =====
+   axios 的 catch 覆盖范围很宽：断网、DNS 失败、连接被拒、被浏览器拦截（CORS / 混合内容）、
+   以及所有非 2xx 的状态码（429 限流、502/503 后端未就绪、500 异常）都会落到这里。
+   全部笼统提示「网络连接失败」会把用户引到错误方向——该等的是服务器，却去查自己的网。
+   所以按实际情况分类，只有真的没有 HTTP 响应时才算网络问题。 */
+function fcSubmitFail(panelId, err){
+    var status = err && err.response ? err.response.status : undefined;
+    var code = err && err.code;
+    var body = err && err.response ? err.response.data : null;
+    var serverMsg = (body && typeof body === 'object' && typeof body.message === 'string') ? body.message : '';
+    var msg;
+    if(code === 'ECONNABORTED' || code === 'ETIMEDOUT'){
+        //超时：请求发出去了但一直没等到响应
+        msg = '连接超时，请稍后重试';
+    }else if(status === 429){
+        //限流拦截器返回的是 HTTP 429，后端已给出中文文案，优先用它
+        msg = serverMsg || '操作过于频繁，请稍等一会儿再试';
+    }else if(status >= 500){
+        //502/503/504 是网关侧拿不到上游（反向代理时后端未就绪或已停止）；
+        //500 则是后端自己抛了异常，两者的说法要区分开
+        var gateway = (status === 502 || status === 503 || status === 504);
+        msg = serverMsg || (gateway
+                ? ('服务暂时不可用（' + status + '），请稍后重试')
+                : ('服务器处理出错了（' + status + '），请稍后重试'));
+    }else if(status === undefined){
+        //完全没拿到响应：断网、域名解析失败、连接被拒、CORS 被浏览器拦下
+        msg = '无法连接服务器，请检查网络后重试';
+    }else if(serverMsg){
+        msg = serverMsg;
+    }else{
+        msg = '请求被拒绝（HTTP ' + status + '），请稍后重试';
+    }
+    panelTip(panelId, msg, true);
 }
 
     let loginPage = document.getElementById('login');
@@ -179,7 +220,7 @@ function fcSetSubmitting(btnId, waitId, busy, busyText){
             id:registerId,
             name:registerName,
             password: registerPassword
-        }).then(function (response) {
+        }, {timeout:FC_SUBMIT_TIMEOUT}).then(function (response) {
             registerSubmitting = false;
             fcSetSubmitting('registerBtn', 'wait-register', false);
             if(response.data.code===200){
@@ -220,7 +261,7 @@ function fcSetSubmitting(btnId, waitId, busy, busyText){
             registerSubmitting = false;
             fcSetSubmitting('registerBtn', 'wait-register', false);
             console.log(e);
-            panelTip('registerPanel', '网络连接失败，请检查服务是否可用后重试', true);
+            fcSubmitFail('registerPanel', e);
         })
     }
     var loginSubmitting = false;
@@ -243,7 +284,7 @@ function fcSetSubmitting(btnId, waitId, busy, busyText){
         axios.post(url+'/loginPost',{
             login:loginId,
             password:password
-        }).then(function (response) {
+        }, {timeout:FC_SUBMIT_TIMEOUT}).then(function (response) {
             if(response.data.code===200){
                 //登录成功不弹提示，直接进入对局页
                 localStorage.setItem('user',JSON.stringify(response.data.content));
@@ -266,7 +307,7 @@ function fcSetSubmitting(btnId, waitId, busy, busyText){
             loginSubmitting = false;
             fcSetSubmitting('loginBtn', 'wait-login', false);
             console.log(e);
-            panelTip('loginPanel', '网络连接失败，请检查服务是否可用后重试', true);
+            fcSubmitFail('loginPanel', e);
         })
     }
 

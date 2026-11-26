@@ -128,14 +128,13 @@
             color: #7d8892;
         }
         /* white-space: pre-line 让文案里的 \n 生效：长句按语义分两行，
-           避免自动折行后第二行只剩「就好……」这种孤行（text-wrap: pretty 对中文不生效，已弃用） */
+           避免自动折行后第二行只剩「马上就好」这种孤行（text-wrap: pretty 对中文不生效，已弃用） */
         .fc-wait-tip .fc-wait-text{
             white-space: pre-line;
         }
-        /* 冷启动那条文案自带省略号，末尾的呼吸点重复了，隐藏掉 */
-        .fc-wait-tip.is-cold .fc-dots{
-            display: none;
-        }
+        /* 10 秒那条文案末尾不再写「……」，省略号统一由 .fc-dots 承担，
+           所以从 5 秒切到 10 秒时这三点原地继续呼吸，不闪断、不重播。
+           （.is-cold 仍由 JS 打上，作为「已进入冷启动长等待」的状态标记，暂无专属样式） */
         .fc-wait-tip.show{
             display: block;
             animation: fcFadeIn .25s ease;
@@ -272,6 +271,6 @@
 <script src="./static/js/axios.min.js?v=20261123a" type="text/javascript"></script>
 <script src="./static/js/jquery.min.js?v=20261123a"></script>
 <script src="./static/js/jquery-confirm.js?v=20261123a"></script>
-<script src="./static/js/login.js?v=20261126e" type="text/javascript"></script>
+<script src="./static/js/login.js?v=20261126h" type="text/javascript"></script>
 </body>
 </html>
