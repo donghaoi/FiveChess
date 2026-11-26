@@ -5,7 +5,7 @@ let url = getHttpUrl();
    弱网或后端冷启动时一次登录可能要等十几秒，期间必须让用户看到「在动」，
    否则会反复点击（重复登录会让两次签发的令牌互相顶掉）。
    - 按钮：禁用 + 转圈 + 文案变「登录中…」
-   - 提示：2 秒后才出现（正常网速根本看不到），10 秒后升级为「服务器可能在冷启动」，
+   - 提示：5 秒后才出现（正常网速根本看不到），10 秒后升级为「服务器可能在冷启动」，
      这条对 Render 免费实例的首访很有用（实测冷启动约 75 秒） */
 var fcWaitTimers = {};
 
@@ -51,7 +51,7 @@ function fcSetSubmitting(btnId, waitId, busy, busyText){
             wait.classList.remove('is-cold');
             if(textEl){ textEl.textContent = '网络较慢，正在等待服务器响应'; }
             wait.classList.add('show');
-        }, 2000),
+        }, 5000),
         cold: setTimeout(function(){
             if(!wait || !textEl){ return; }
             //\n 由 CSS 的 white-space: pre-line 渲染成换行，长句按语义断成两行

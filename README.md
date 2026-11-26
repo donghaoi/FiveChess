@@ -456,7 +456,7 @@ java -jar release/FiveChess-server-<版本号>.jar
 >
 > 数据库需有 `user_avatar` 表（`数据库/chess.sql` 已包含；已有库按「数据库」章节给出的 `CREATE TABLE IF NOT EXISTS` 语句补一次即可）。表缺失时头像上传会自动降级为「只用内置头像」，登录与对局不受影响。
 >
-> **部署必须同步更新的前端文件**：`web/static/js/index.js`（头像地址解析与降级）、`web/index.html`（头像绑定与脚本版本号）、`web/static/image/default-avatar.svg`（中性占位图）、`web/static/css/semantic.min.css`（见下节「首屏渲染」）、`web/login.html`（注册面板默认隐藏、首帧兜底与首页资源预取）、`web/static/image/` 下的 5 张 WebP 背景图与 `avatar.webp`、整个 `web/static/image/touxiang/` 目录（1375 张内置头像，全部为 `.webp`；与 jar 内 `avatar-builtin.txt` 清单必须同批部署）。只更新其中一部分会出现「头像空白」「背景图 404」等问题。
+> **部署必须同步更新的前端文件**：`web/static/js/index.js`（头像地址解析与降级）、`web/static/js/login.js`（登录/注册的提交等待态）、`web/index.html`（头像绑定与脚本版本号）、`web/static/image/default-avatar.svg`（中性占位图）、`web/static/css/semantic.min.css`（见下节「首屏渲染」）、`web/login.html`（注册面板默认隐藏、首帧兜底与首页资源预取）、`web/static/image/` 下的 5 张 WebP 背景图与 `avatar.webp`、整个 `web/static/image/touxiang/` 目录（1375 张内置头像，全部为 `.webp`；与 jar 内 `avatar-builtin.txt` 清单必须同批部署）。只更新其中一部分会出现「头像空白」「背景图 404」等问题。
 
 > **首屏渲染约束**：改动 `semantic.min.css`、`login.html`、`index.html` 时必须遵守下面三条，否则会出现白屏、黑屏或文字延迟出现。
 > 1. `web/static/css/semantic.min.css` 顶部**不得**引入第三方字体外链（如 Google Fonts）。外链会阻塞渲染，国内网络常要等到超时，期间整页空白；且 `Lato` 无中文字形，中文要等系统回退字体异步解析后才出字。中文统一走系统字体。
@@ -467,6 +467,13 @@ java -jar release/FiveChess-server-<版本号>.jar
 > 1. `web/login.html` 用 `<link rel="prefetch">` 预取首页资源（`semantic.min.js`、`vue@2.js`、`index.js`、`index.css` 等），用户输入账号密码的时间即完成预热。**这些 `?v=` 必须与 `index.html` 一致**，否则会各拉一份。
 > 2. 服务端在鉴权通过时即写入在线列表并广播，不等客户端再发 `report-nick`，下发给本人的第一份列表已包含自己。客户端的 `report-nick` 保留，用于改名。
 > 3. 背景图与内置头像使用 WebP，控制首屏下载字节数。
+
+> **登录/注册提交的等待反馈**：弱网或后端冷启动时一次请求可能要十几秒，点击后必须立刻有反馈，否则用户会反复点击——重复登录会让两次签发的令牌互相顶掉。行为分三段，由 `web/static/js/login.js` 的 `fcSetSubmitting()` 控制：
+> 1. **点击瞬间**：按钮禁用＋转圈，文案变「登录中…／注册中…」。按钮保持主色，不靠「变灰」表示禁用：`.ui.button.fc-submit.is-loading` 用 `opacity:1 !important` 压过 Semantic 的 `.ui.button:disabled{opacity:.45}`，变灰反而像是点坏了。
+> 2. **5 秒仍无响应**：按钮下方出现「网络较慢，正在等待服务器响应」＋呼吸点。阈值刻意留长：正常网速几百毫秒内就返回，阈值过短会让每次登录都闪一行多余的字。
+> 3. **10 秒仍无响应**：文案改为「服务器还在努力赶路中，请再给它一点点时间，不要离开我，马上就好……」，按 `\n` 断成两行（由 `.fc-wait-text{white-space:pre-line}` 渲染，`text-wrap:pretty` 对中文不生效），同时隐藏末尾呼吸点（文案自带省略号，否则重复）。
+>
+> 请求成功时**不恢复按钮**，一直保持「登录中…」直到页面跳转；只有失败与网络异常才恢复，避免按钮闪回「登录」被误认为没点上。这段样式内联在 `web/login.html`（`login.css` 不含相关规则，其 `?v=` 不必动），但改动 `login.js` 后必须同步升 `login.html` 里它的 `?v=`，两个文件同批部署。
 
 > **静态资源缓存（前端与内置头像托管在 Vercel，无需额外配置）**：线上响应头为
 > `Cache-Control: public, s-maxage=86400, max-age=86400` + `ETag`（`Server: Vercel`、`X-Vercel-Cache: HIT`），
