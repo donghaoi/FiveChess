@@ -73,7 +73,15 @@ body{
     box-sizing: border-box;
 }
 
-/* 密码输入框右侧的“小眼睛”，点击在明文与密文之间切换 */
+/* 密码输入框右侧的“小眼睛”，点击在明文与密文之间切换。
+   Edge / IE 会在密码框内部自带一个「显示密码」按钮（::-ms-reveal），
+   只有真实敲过字之后才出现，位置正好压在这一行右侧，和页面自己的眼睛叠成两个。
+   这里把它连同老 IE 的清除按钮一起关掉，统一由 .password-eye 负责。 */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear{
+    display: none;
+}
+
 .password-input{
     position: relative;
 }

@@ -82,6 +82,13 @@ html body{
     /* 只裁剪横向溢出；clip 不生成纵向滚动容器，页面仍可正常上下滚动 */
     overflow-x: clip;
 }
+/* 房间密码弹窗里的密码框也有自定义小眼睛（.room-password-eye）。
+   Edge / IE 自带的显示密码按钮只在真实输入后出现，正好压在同一个位置，
+   不关掉就会看到两个眼睛。 */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear{
+    display: none;
+}
 .container-all{
     width: 100%;
     display: flex;
