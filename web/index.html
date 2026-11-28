@@ -11,7 +11,7 @@
 	<!-- 首屏背景提前下载：Vue 挂载后立刻就是成品画面，不会先黑一下再弹出背景图 -->
 	<link rel="preload" as="image" href="./static/image/bg-2.webp">
 	<link rel="preload" as="image" href="./static/image/default-avatar.svg">
-	<link rel="stylesheet" href="./static/css/index.css?v=20261118c">
+	<link rel="stylesheet" href="./static/css/index.css?v=20261128c">
 	<link rel="stylesheet" href="./static/css/semantic.min.css?v=20261118a">
 	<link rel="stylesheet" href="./static/css/jquery-confirm.css?v=20261123a">
 	<link rel="stylesheet" href="./static/css/bootstrap.min.css?v=20261123a">
@@ -247,6 +247,64 @@
 				font-size: 16px;
 			}
 		}
+
+		/* ===== 刷新后恢复上次页面的等待提示 =====
+		   刷新时大厅与棋盘都是隐藏的（避免先闪一下大厅再跳回房间），中间只剩背景图，
+		   用户容易以为页面卡死。这里在视口中央给一个小胶囊 + 转圈，说明「在等房间回来」。
+		   显示与否只看 restoring（由 JS 延迟 400ms 再打开，避免正常网速下闪一下）；
+		   z-index 低于顶部连接提示条（20000），不会挡住「点击此处立即重试」。 */
+		.fc-restore-mask{
+			position: fixed;
+			top: 0;
+			right: 0;
+			bottom: 0;
+			left: 0;
+			z-index: 15000;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			padding: 0 24px;
+			opacity: 0;
+			visibility: hidden;
+			pointer-events: none;
+			transition: opacity .18s ease, visibility .18s;
+		}
+		.fc-restore-mask.is-visible{
+			opacity: 1;
+			visibility: visible;
+		}
+		.fc-restore-box{
+			display: flex;
+			align-items: center;
+			gap: 10px;
+			max-width: 100%;
+			padding: 12px 20px;
+			border-radius: 999px;
+			background: rgba(22, 22, 22, .72);
+			box-shadow: 0 10px 30px rgba(0, 0, 0, .32);
+			color: #f1f3f5;
+			font-size: 14px;
+			line-height: 20px;
+			letter-spacing: .3px;
+			-webkit-backdrop-filter: blur(6px);
+			backdrop-filter: blur(6px);
+		}
+		.fc-restore-spin{
+			flex: none;
+			width: 15px;
+			height: 15px;
+			border: 2px solid rgba(255, 255, 255, .3);
+			border-top-color: #fff;
+			border-radius: 50%;
+			animation: fcRestoreSpin .75s linear infinite;
+		}
+		@keyframes fcRestoreSpin{
+			to{ transform: rotate(360deg); }
+		}
+		/* 系统开启「减少动态效果」时放慢转圈，不做完全静止（否则看不出还在等） */
+		@media (prefers-reduced-motion: reduce){
+			.fc-restore-spin{ animation-duration: 2.4s; }
+		}
 	</style>
 </head>
 <body >
@@ -255,8 +313,19 @@
 <div id="app" v-cloak>
 	<!-- 背景层：固定在视口，任何分辨率、滚动与缩放都完整铺满，不随内容高度截断 -->
 	<div class="bg-layer" :style="'background-image: url('+background_image+')'"></div>
-	<!-- 连接状态提示条：断线后自动重连期间显示（点击可立即重试），重连成功即消失 -->
-	<div class="fc-conn-banner" v-if="connBanner" @click="forceReconnect()">{{connBanner}}</div>
+	<!-- 连接状态提示条：任何一次连接/重连都立刻出现（连接中带转圈），点击可立即重试，恢复后淡出 -->
+	<transition name="fc-banner">
+		<div class="fc-conn-banner" v-if="connBanner" :class="{busy: connBannerBusy}" @click="forceReconnect()">
+			<span class="fc-conn-spin" v-if="connBannerBusy" aria-hidden="true"></span><span class="fc-conn-text">{{connBanner}}</span><span class="fc-conn-hint" v-if="connBannerHint">{{connBannerHint}}</span>
+		</div>
+	</transition>
+	<!-- 刷新后恢复房间/观战/历史时的等待提示：避开「只有背景图」的空白期，恢复结束即淡出 -->
+	<div class="fc-restore-mask" :class="{'is-visible': restoreMask}" role="status" aria-live="polite">
+		<div class="fc-restore-box">
+			<span class="fc-restore-spin" aria-hidden="true"></span>
+			<span class="fc-restore-text">{{restoreMaskText}}</span>
+		</div>
+	</div>
 	<div class="wrapper">
 
 		<!-- 房间顶部：比分条 + 房间号标题。两者放在同一个纵向居中容器里，
@@ -557,6 +626,6 @@
 <script src="./static/js/axios.min.js?v=20261123a" type="text/javascript"></script>
 <script type="text/javascript" src="./static/js/vue@2.js?v=20261123a"></script>
 <script src="./static/js/common.js?v=20261116d" type="text/javascript"></script>
-<script src="./static/js/index.js?v=20261126b" type="text/javascript"></script>
+<script src="./static/js/index.js?v=20261128d" type="text/javascript"></script>
 
 </body></html>

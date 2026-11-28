@@ -1,4 +1,7 @@
 /* index.html 页面主脚本：Vue 应用实例、房间与棋局逻辑、WebSocket 通信、棋盘绘制。 */
+	//顶部连接提示条的最短停留时间：任何一次连接/重连都立刻出现，但快于这个时长就恢复时
+	//至少留满再淡出，否则一闪而过会像界面故障（500ms 内恢复本身用户几乎无感）。
+	const FC_BANNER_MIN_MS = 500;
 	let socket;//好友之间发送消息的服务器
 	//「请求类」操作的等待计时器：对手长时间不响应时自动解除等待，避免界面被永久锁死
 	let fcWaitingTimer = null;
@@ -106,6 +109,11 @@ onlineUserList: [],  // 在线用户昵称数组
 			pendingReview: null,  //刷新前处于复盘：历史列表加载完成后重新进入该局复盘
 			restorePending: null, //刷新前处于房间/观战：等待服务端 room-restore
 			restoring: false,     //刷新恢复中：此期间不显示大厅，避免闪一下大厅
+			//刷新恢复期的居中提示（胶囊+转圈）：只在恢复真的超过 400ms 时才出现，
+			//撤掉时机完全跟随 restoring，不另设定时器，避免提示与实际页面不同步
+			restoreMask: false,
+			restoreMaskText: '正在恢复上次的页面…',
+			restoreMaskTimer: null,
 			inviteCooldowns: {}, // 邀请被拒后的冷却倒计时：被邀请者id -> 剩余秒数
 			invitePending: {}, // 已发出邀请、等待对方处理：被邀请者id -> true
 			inviteBlocked: {}, // 当天屏蔽：该邀请者当天不可再邀请的被邀请者id -> true
@@ -130,7 +138,12 @@ spectateMode: false, // 是否处于观战（只读）状态
 			heartbeatTimer: null,
 			// ===== 连接状态（断线重连 / 页面恢复）=====
 			connState: 'idle',      // idle 未连接 / connecting 连接中 / open 已连接 / down 已断开
-			connBanner: '',         // 顶部连接提示条文案（断开重连时显示）
+			connBanner: '',         // 顶部连接提示条的主体文案（连接中/断开重连时显示）
+			connBannerHint: '',     // 提示条右侧的动作胶囊（如「立即重试」），由文案里的全角空格拆出来
+			connBannerBusy: false,  // 提示条是否显示转圈：连接/重连/探活时为真，「网络已断开」这类静态提示为假
+			connBannerAt: 0,        // 提示条出现时刻：用于保证至少停留 FC_BANNER_MIN_MS，避免快速重连只闪一下
+			connBannerHideTimer: null, // 提示条延迟淡出的定时器（最短停留时间未到就等满再收）
+			connProbeBanner: false, // 顶部条当前显示的是「正在确认连接状态…」，探活成功后要撤掉
 			reconnectTimer: null,   // 下一次重连的定时器
 			reconnectAttempt: 0,    // 已重连次数（用于退避）
 			pendingAction: null,    // 断线期间用户发起的操作，重连成功后自动补发一次
@@ -200,6 +213,7 @@ spectateMode: false, // 是否处于观战（只读）状态
 			var that = this;
 			window.addEventListener('pagehide', function(){
 				window.__fcPageHidden = true;
+				window.__fcHiddenAt = Date.now();
 			});
 			window.addEventListener('pageshow', function(e){
 				var wasHidden = window.__fcPageHidden;
@@ -219,21 +233,34 @@ spectateMode: false, // 是否处于观战（只读）状态
 				if(wasHidden){ that.resumeConnection(false); }
 			});
 			document.addEventListener('visibilitychange', function(){
-				if(document.visibilityState === 'visible'){
-					//重新可见即认为“不再处于离开页面的过程”，避免 pagehide 标记残留导致不再重连
-					window.__fcPageHidden = false;
-					that.resumeConnection(false);
+				if(document.visibilityState === 'hidden'){
+					//记下离开时刻：回来时据此判断「是秒回还是要先探活」，决定要不要立刻给提示
+					window.__fcHiddenAt = Date.now();
+					return;
 				}
+				//重新可见即认为“不再处于离开页面的过程”，避免 pagehide 标记残留导致不再重连
+				window.__fcPageHidden = false;
+				that.resumeConnection(false);
 			});
 			window.addEventListener('online', function(){ that.resumeConnection(false); });
 			window.addEventListener('offline', function(){
-				if(that.connState === 'open'){ that.connBanner = '网络已断开，恢复后会自动重连…'; }
+				if(that.connState === 'open'){
+					//网络断了不用转圈：此刻没有任何正在进行的连接动作，转圈会像在空转
+					that.setConnBanner('网络已断开，恢复后会自动重连…', false);
+				}
 			});
 		},
 		watch:{
 			//被管理员禁言 / 解除禁言后立即重算滚动，不必刷新页面
 			mutedSelf(){
 				this.updateMutedMarquee();
+			},
+			//刷新恢复提示的开关：restoring 变 true 时延迟出现，变 false 时淡出。
+			//收到 room-restore、2 秒判定「房间已结束」、4 秒连不上兜底，都会把 restoring 置回 false，
+			//所以提示不会比页面多留、也不会提前消失。
+			restoring(val){
+				if(val){ this.armRestoreMask(); }
+				else{ this.disarmRestoreMask(); }
 			}
 		},
 computed:{
@@ -2663,7 +2690,9 @@ this.clearBoard();
 			//统一处理“会话已失效”：弹一个说明原因的弹窗，确认后回登录页
 			showSessionLost(reason){
 				if(window.__fcLoginRedirecting || window.__fcSessionNoticeShown){ return; }
-				this.connBanner = '';
+				//弹窗才是这一刻的主角，提示条立即撤掉，不占用最短停留时间
+				this.hideConnBanner(true);
+				this.connProbeBanner = false;
 				if(this.reconnectTimer){ clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
 				sessionNotice(reason || 'expired');
 				try{
@@ -2810,6 +2839,78 @@ this.historySteps = [];
 			// 2) 只有服务端明确回答“令牌无效”才提示，并且提示里说明原因（重启 / 别处登录）；
 			// 3) 页面被切到后台、跳转别的页面再回来时只重连不弹窗，避免“刚回来就说登录失效”；
 			// 4) 心跳回执 + 静默超时监测，服务被强杀（连接不报错）也能及时发现并重连。
+			// ===== 连接状态提示条 =====
+			//任何一次连接/重连都立即出现，不再等 800ms：用户要求「不管什么情况下重连都要有提示」，
+			//而延迟显示会让快速重连完全无感、慢重连又要干等 0.8 秒才知道在连。
+			//为避免「闪一下就没」，配套两条：① 出现即带转圈动画；② 最短停留 FC_BANNER_MIN_MS 再淡出。
+			showConnectingBanner(){
+				if(window.__fcLeaving || window.__fcLoginRedirecting || window.__fcSessionNoticeShown){ return; }
+				if(window.__fcStopReconnect){ return; }
+				//已经有更准确的文案（断线退避带「第 N 次」、探活中、点击重试）就别覆盖
+				if(this.connBanner){ return; }
+				//刷新后的首次连接不该说「断开」；只有已经连上过再掉线才用「重新连接」
+				this.setConnBanner(window.__fcEverAuthed ? '正在重新连接服务器…' : '正在连接服务器…', true);
+			},
+			//统一的赋值入口：转圈开关与出现时刻都在这里维护，调用方只管文案
+			//文案里用全角空格「　」分隔主体与动作（例：「…正在重连（第 2 次）…　立即重试」）：
+			//主体是状态描述，动作渲染成右侧的小胶囊，桌面和手机上都不会因为一整句话太长而顶到边
+			setConnBanner(text, busy){
+				if(this.connBannerHideTimer){ clearTimeout(this.connBannerHideTimer); this.connBannerHideTimer = null; }
+				if(!this.connBanner){ this.connBannerAt = Date.now(); }
+				let raw = text || '';
+				let cut = raw.indexOf('　');
+				this.connBanner = cut >= 0 ? raw.slice(0, cut) : raw;
+				this.connBannerHint = cut >= 0 ? raw.slice(cut + 1).trim() : '';
+				this.connBannerBusy = !!busy;
+			},
+			//撤掉提示条：默认遵守最短停留时间，避免快速恢复时一闪而过；immediate 用于弹窗接管等场景
+			hideConnBanner(immediate){
+				if(this.connBannerHideTimer){ clearTimeout(this.connBannerHideTimer); this.connBannerHideTimer = null; }
+				if(!this.connBanner){ this.connBannerBusy = false; this.connBannerHint = ''; return; }
+				let that = this;
+				let wait = immediate ? 0 : Math.max(0, FC_BANNER_MIN_MS - (Date.now() - (this.connBannerAt || 0)));
+				if(wait <= 0){
+					this.connBanner = '';
+					this.connBannerHint = '';
+					this.connBannerBusy = false;
+					return;
+				}
+				this.connBannerHideTimer = setTimeout(function(){
+					that.connBannerHideTimer = null;
+					that.connBanner = '';
+					that.connBannerHint = '';
+					that.connBannerBusy = false;
+				}, wait);
+			},
+			clearConnectingBanner(){
+				this.hideConnBanner();
+			},
+			// ===== 刷新恢复等待提示 =====
+			//刷新时大厅与棋盘都被刻意隐藏（否则会先闪一下大厅再跳回房间），中间只剩背景图；
+			//恢复超过 400ms 就居中显示「正在恢复上次的房间…」，让用户知道是在等房间而不是卡死。
+			armRestoreMask(){
+				let that = this;
+				if(this.restoreMaskTimer){ clearTimeout(this.restoreMaskTimer); }
+				//按刷新前的视图换文案：房间/观战、管理员查看、历史/复盘说的不是一回事
+				try{
+					let sv = this.readViewState();
+					let view = sv && sv.view;
+					if(view === 'room' || view === 'spectate'){ this.restoreMaskText = '正在恢复上次的房间…'; }
+					else if(view === 'adminView'){ this.restoreMaskText = '正在恢复房间查看页…'; }
+					else if(view === 'history' || view === 'review'){ this.restoreMaskText = '正在恢复上次的对局…'; }
+				}catch(e){}
+				this.restoreMaskTimer = setTimeout(function(){
+					that.restoreMaskTimer = null;
+					if(!that.restoring){ return; }
+					//恢复在这 400ms 内已经完成（房间已渲染、或已回大厅）就不再弹，避免一闪而过
+					if(that.roomReady || that.lobbyReady || that.spectateMode || that.adminViewOpen){ return; }
+					that.restoreMask = true;
+				}, 400);
+			},
+			disarmRestoreMask(){
+				if(this.restoreMaskTimer){ clearTimeout(this.restoreMaskTimer); this.restoreMaskTimer = null; }
+				this.restoreMask = false;
+			},
 			//用户操作前的连接保障：连接正常返回 true；
 			//未连接时先把这次操作排队、立即重连，等鉴权成功后自动补发，用户不必再刷新页面
 			ensureConnection(action){
@@ -2894,6 +2995,9 @@ this.historySteps = [];
 				let ws = new WebSocket(getWsUrl()+"/socket/"+this.user.id);
 				socket = ws;
 				that.connState = 'connecting';
+				//每一次连接都立刻在顶部显示「正在连接/重新连接服务器…」并带转圈，
+				//快于 500ms 的恢复也会停留满再淡出，不会一闪而过
+				that.showConnectingBanner();
 				//连接超时：网络黑洞时浏览器可能迟迟不报错，8 秒未建立就当作失败进入重连
 				let connectTimer = setTimeout(function(){
 					if(ws === socket && that.connState === 'connecting'){
@@ -2951,6 +3055,10 @@ this.historySteps = [];
 				if(ws && ws !== socket){ return; }
 				if(window.__fcLeaving || window.__fcLoginRedirecting || window.__fcSessionNoticeShown){ return; }
 				if(window.__fcStopReconnect){ return; }
+				//注意：这里不能撤提示条。一次失败会先后触发 onerror 与 onclose，
+				//第二次进来时 connState 已是 down、会直接 return；若在 return 之前清理，
+				//就会把 scheduleReconnect 刚设好的「第 N 次重试…」又抹掉，造成提示条一闪一闪。
+				//提示条只由「鉴权成功 / 会话失效 / 连接数超限」三处负责撤。
 				if(this.connState === 'down'){ return; }
 				this.connState = 'down';
 				if(this.heartbeatTimer){
@@ -2978,9 +3086,18 @@ this.historySteps = [];
 				let attempt = this.reconnectAttempt;
 				let wait = delays[Math.min(attempt, delays.length - 1)];
 				this.reconnectAttempt = attempt + 1;
-				this.connBanner = attempt === 0
-					? '连接已断开，正在重新连接…'
-					: '连接已断开，正在重连（第 ' + attempt + ' 次）…　点击此处立即重试';
+				//首次进入页面（从未鉴权成功）时说「连接已断开」会让人以为是自己掉线了，
+				//这类场景多半是后端冷启动或首屏网络慢，用「正在连接」描述更准确
+				this.connProbeBanner = false;
+				if(window.__fcEverAuthed){
+					this.setConnBanner(attempt === 0
+						? '连接已断开，正在重新连接…'
+						: '连接已断开，正在重连（第 ' + attempt + ' 次）…　立即重试', true);
+				}else{
+					this.setConnBanner(attempt === 0
+						? '正在连接服务器…'
+						: '正在连接服务器（第 ' + attempt + ' 次重试）…　立即重试', true);
+				}
 				if(this.reconnectTimer){ clearTimeout(this.reconnectTimer); }
 				this.reconnectTimer = setTimeout(function(){
 					that.reconnectTimer = null;
@@ -3010,6 +3127,9 @@ this.historySteps = [];
 				window.__fcStopReconnect = false;
 				if(this.reconnectTimer){ clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
 				this.reconnectAttempt = 0;
+				this.connProbeBanner = false;
+				//立刻把「点击重试」换成「正在连接」，转圈继续转
+				this.setConnBanner(window.__fcEverAuthed ? '正在重新连接服务器…' : '正在连接服务器…', true);
 				this.connectSocket();
 			},
 			//心跳回执监测：服务端被强杀时连接可能长时间不报错，靠“安静超时”发现并重连
@@ -3056,7 +3176,15 @@ this.historySteps = [];
 				this.probeTimer = setTimeout(function(){
 					that.probeTimer = null;
 					if(window.__fcLeaving || window.__fcLoginRedirecting || window.__fcSessionNoticeShown){ return; }
-					if(that.lastServerAt >= mark){ that.replayPending(); return; }
+					if(that.lastServerAt >= mark){
+						//探活成功：连接还能用，撤掉「正在确认连接状态…」（不足 500ms 会等满再淡出）
+						if(that.connProbeBanner){
+							that.connProbeBanner = false;
+							that.clearConnectingBanner();
+						}
+						that.replayPending();
+						return;
+					}
 					console.log('回到页面后连接无应答，判定已失效，立即重建');
 					that.connState = 'down';
 					if(that.heartbeatTimer){ clearInterval(that.heartbeatTimer); that.heartbeatTimer = null; }
@@ -3064,6 +3192,10 @@ this.historySteps = [];
 						if(socket){ socket.onclose = null; socket.onerror = null; socket.close(); }
 					}catch(e){}
 					that.reconnectAttempt = 0;
+					if(that.connProbeBanner){
+						that.connProbeBanner = false;
+						that.setConnBanner('正在重新连接服务器…', true);
+					}
 					that.connectSocket();
 				}, 1200);
 				return true;
@@ -3085,9 +3217,20 @@ this.historySteps = [];
 				if(window.__fcLeaving || window.__fcLoginRedirecting || window.__fcSessionNoticeShown){ return; }
 				if(!fromCache && document.visibilityState === 'hidden'){ return; }
 				if(!fromCache && socket && socket.readyState === 1 && this.connState === 'open'){
+					//离开超过 30 秒：连接可能已被系统断流（手机锁屏、切后台太久），
+					//探活要等 1.2 秒才出结果，先给提示，别让用户以为已经好了
+					let hiddenFor = window.__fcHiddenAt ? (Date.now() - window.__fcHiddenAt) : 0;
+					if(hiddenFor >= 30000){
+						this.connProbeBanner = true;
+						this.setConnBanner('正在确认连接状态…', true);
+					}
 					//连接看着还在：先探活，通了就继续用，不通立即重建，避免“显示在线却发不出消息”
 					if(this.probeConnection()){ return; }
 					this.connState = 'down';
+					if(this.connProbeBanner){
+						this.connProbeBanner = false;
+						this.setConnBanner('正在重新连接服务器…', true);
+					}
 				}
 				this.reconnectAttempt = 0;
 				//直接重连：令牌若已失效，服务端会在鉴权时回答 auth-fail（带原因），
@@ -3126,7 +3269,9 @@ case 'auth-success'://登录令牌鉴权通过，再上报在线昵称
 								window.__fcAuthOk = true;
 								that.connState = 'open';
 								that.reconnectAttempt = 0;
-								that.connBanner = '';
+								//连接恢复：撤掉提示条（若出现不足 500ms 会等满再淡出，避免一闪而过）
+								that.connProbeBanner = false;
+								that.clearConnectingBanner();
 								window.__fcRestartAnnounced = false;
 								window.__fcStopReconnect = false;
 								//断线期间用户点过的操作：连上并鉴权通过后补发一次
@@ -3230,7 +3375,9 @@ case 'kicked'://账号在别处登录（服务端把旧连接顶掉了）
 								break;
 							case 'ws-limit'://单 IP 并发连接数超限：服务端随后会断开，这里不再自动重试，避免反复撞限
 								window.__fcStopReconnect = true;
-								that.connBanner = (data.content || '当前网络连接数过多，请稍后再试！') + '　点击此处重试';
+								that.connProbeBanner = false;
+								//已暂停自动重连，不转圈（转圈会让人以为还在重试）；点提示条才恢复
+								that.setConnBanner((data.content || '当前网络连接数过多，请稍后再试！') + '　立即重试', false);
 								break;
 							case 'server-restart'://服务端重启前主动通知：立即提示，不必等请求失败
 								window.__fcRestartAnnounced = true;

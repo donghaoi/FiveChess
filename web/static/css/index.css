@@ -70,6 +70,10 @@ html body{
 }
 .wrapper{
     padding-bottom: 20px;
+    /* 顶部提示条出现时由 .fc-conn-banner ~ .wrapper 把这个值加上去，
+       过渡与提示条自身的滑入（0.18s）同速，看起来是提示条把内容推下来 */
+    padding-top: 0;
+    transition: padding-top .18s ease;
     position: relative;
     margin: 0;
     width: 100%;
@@ -1703,26 +1707,105 @@ padding: 0;
     }
 }
 
-/* 连接状态提示条：断线重连、网络中断时固定显示在页面顶部，点击立即重试 */
+/* 连接状态提示条：任何一次连接/重连都立即显示在页面顶部，点击立即重试 */
 .fc-conn-banner{
     position: fixed;
     top: 0;
     left: 0;
     right: 0;
     z-index: 20000;
-    padding: 7px 14px;
-    background: #b45309;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 7px 16px;
+    /* 竖向渐变 + 一条更深的底边，比纯色更立体；颜色仍是暖橙，和站点强调色一致 */
+    background: linear-gradient(180deg, #c2620f 0%, #a8540a 100%);
+    border-bottom: 1px solid rgba(0, 0, 0, .12);
     color: #fff;
     font-size: 13px;
     line-height: 20px;
     text-align: center;
     letter-spacing: .2px;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, .18);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .22);
     cursor: pointer;
     user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+/* 长文案在窄屏允许折行，转圈始终贴在文字左侧、不参与换行 */
+.fc-conn-banner .fc-conn-text{
+    min-width: 0;
+    text-align: center;
+    overflow-wrap: anywhere;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, .12);
+}
+/* 动作胶囊：「立即重试」这类可点的动作和状态描述分开显示，
+   桌面端像一个小按钮，手机窄屏也不会跟长句挤成一整行贴到边上 */
+.fc-conn-banner .fc-conn-hint{
+    flex: none;
+    padding: 0 10px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .18);
+    border: 1px solid rgba(255, 255, 255, .32);
+    font-size: 12px;
+    line-height: 18px;
+    letter-spacing: 0;
+    white-space: nowrap;
+}
+.fc-conn-banner .fc-conn-spin{
+    flex: none;
+    width: 13px;
+    height: 13px;
+    border: 2px solid rgba(255, 255, 255, .35);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: fcConnSpin .7s linear infinite;
+}
+@keyframes fcConnSpin{
+    to{ transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce){
+    .fc-conn-banner .fc-conn-spin{ animation-duration: 2.1s; }
+}
+/* 出现/消失用淡入 + 轻微下滑，避免「啪」地闪出来；离场只有 0.18s，不拖慢重连后的操作 */
+.fc-banner-enter-active,
+.fc-banner-leave-active{
+    transition: opacity .18s ease, transform .18s ease;
+}
+.fc-banner-enter,
+.fc-banner-leave-to{
+    opacity: 0;
+    transform: translateY(-100%);
 }
 .fc-conn-banner:hover{
-    background: #92400e;
+    background: linear-gradient(180deg, #ac580d 0%, #94490a 100%);
+}
+.fc-conn-banner:hover .fc-conn-hint{
+    background: rgba(255, 255, 255, .28);
+}
+
+/* 提示条是 fixed 定位，原本会压住页面最上方的房间标题与比分条。
+   它和 .wrapper 是同级兄弟（中间隔着恢复遮罩），所以用兄弟选择器在它出现时
+   把整个页面内容下推一个条高；提示条离场后选择器失效，padding 过渡回 0，
+   内容平滑回位——页面既不会被盖住，也不会永久多出一条空白。 */
+.fc-conn-banner ~ .wrapper{
+    padding-top: 34px;
+}
+@media (max-width: 640px){
+    /* 窄屏：整体字号、间距略收，动作胶囊也缩一号，尽量让「状态 + 立即重试」留在同一行 */
+    .fc-conn-banner{
+        gap: 8px;
+        padding: 7px 14px;
+        font-size: 12.5px;
+    }
+    .fc-conn-banner .fc-conn-hint{
+        padding: 0 8px;
+        font-size: 11.5px;
+    }
+    /* 万一仍折成两行（条高约 54px），配合标题自身的 10px 上边距正好贴住条底，不会盖住 */
+    .fc-conn-banner ~ .wrapper{
+        padding-top: 44px;
+    }
 }
 
 /* ===== 房间实时比分：位于「房间号」标题上方，桌面端与标题一起左移，对齐棋盘中心 ===== */
